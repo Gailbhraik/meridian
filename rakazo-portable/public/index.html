@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rakazo Portable</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🤖</text></svg>"
+    />
+  </head>
+  <body>
+    <aside id="sidebar">
+      <header class="side-head">
+        <div class="brand">Rakazo <span>portable</span></div>
+        <button id="new-chat" class="primary">Nouvelle conversation</button>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-panel="convos">Conversations</button>
+        <button class="tab" data-panel="memories">Mémoire</button>
+      </nav>
+
+      <div id="panel-convos" class="panel"><ul id="convo-list"></ul></div>
+
+      <div id="panel-memories" class="panel hidden">
+        <form id="memory-form">
+          <input id="memory-input" placeholder="Ajouter un souvenir…" autocomplete="off" />
+        </form>
+        <ul id="memory-list"></ul>
+        <p class="hint">Le bot lit ces souvenirs à chaque message et peut en ajouter lui‑même.</p>
+      </div>
+
+      <footer class="side-foot">
+        <button id="open-settings" class="ghost">Réglages</button>
+        <span id="model-badge" class="badge"></span>
+      </footer>
+    </aside>
+
+    <main>
+      <div id="messages">
+        <div class="empty">
+          <h1>Rakazo Portable</h1>
+          <p>Un bot local, une clé OpenRouter, une mémoire qui persiste entre les sessions.</p>
+        </div>
+      </div>
+      <form id="composer">
+        <textarea id="input" rows="1" placeholder="Écris ton message…  (Entrée pour envoyer)"></textarea>
+        <button id="send" class="primary" type="submit">Envoyer</button>
+      </form>
+    </main>
+
+    <dialog id="settings">
+      <form method="dialog" id="settings-form">
+        <h2>Réglages</h2>
+
+        <label for="api-key">Clé API OpenRouter</label>
+        <input id="api-key" type="password" placeholder="sk-or-v1-…" autocomplete="off" />
+        <p class="hint">
+          À créer sur <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Elle
+          est stockée en clair dans <code>data/config.json</code>, à côté de ce dossier.
+        </p>
+
+        <label for="model">Modèle</label>
+        <input id="model" list="model-list" placeholder="anthropic/claude-sonnet-4.5" autocomplete="off" />
+        <datalist id="model-list"></datalist>
+
+        <label for="temperature">Température <span id="temp-value"></span></label>
+        <input id="temperature" type="range" min="0" max="2" step="0.1" />
+
+        <label for="system-prompt">Personnalité (prompt système)</label>
+        <textarea id="system-prompt" rows="7"></textarea>
+
+        <menu>
+          <button value="cancel" class="ghost" type="submit">Annuler</button>
+          <button value="save" class="primary" type="submit">Enregistrer</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
