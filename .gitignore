@@ -1,0 +1,11 @@
+# Ce dépôt ne suit que Meridian. Les autres projets du dossier restent en dehors.
+pokedex/
+twitch-adblock/
+
+# Réglages locaux de l'outillage
+.claude/
+
+# Systèmes de fichiers
+Thumbs.db
+desktop.ini
+.DS_Store
