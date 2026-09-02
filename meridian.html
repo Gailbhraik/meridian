@@ -535,8 +535,11 @@
             </label>
             <label>Devise de cotation
               <select id="fCur">
-                <option value="EUR">EUR</option>
                 <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
+                <option value="CHF">CHF</option>
+                <option value="CAD">CAD</option>
+                <option value="JPY">JPY</option>
               </select>
             </label>
           </div>
@@ -650,7 +653,31 @@
 
   /* Montants stockés en euros ; la devise ci-dessous n'est qu'un habillage d'affichage. */
   var DEFAULTS = {currency:"USD", fx:1.16, fxAt:null, fxSrc:"par défaut", sync:false,
-    usdDefault:false, twHandle:"CerebrasSystems", twFeed:""};
+    rates:{USD:1.16}, usdDefault:false, curFixed:false,
+    twHandle:"CerebrasSystems", twFeed:""};
+
+  /* Devise dans laquelle une place cote. Un symbole sans suffixe est américain,
+     donc coté en dollars : c'est le cas le plus courant, et l'oublier fausse
+     le prix du montant exact du taux de change. */
+  var SUFFIX_CUR = {
+    PA:"EUR", AS:"EUR", DE:"EUR", F:"EUR", MI:"EUR", MC:"EUR", BR:"EUR",
+    LS:"EUR", HE:"EUR", VI:"EUR", IR:"EUR", AT:"EUR",
+    SW:"CHF", VX:"CHF", TO:"CAD", V:"CAD", T:"JPY"
+  };
+  var CUR_LABELS = ["EUR","USD","CHF","CAD","JPY"];
+
+  function curFromSymbol(sym){
+    var m = String(sym || "").toUpperCase().match(/\.([A-Z]+)$/);
+    if(!m) return "USD";
+    return SUFFIX_CUR[m[1]] || "";      /* suffixe inconnu : à choisir à la main */
+  }
+
+  /* Unités de la devise pour 1 euro. Renvoie null si le taux manque. */
+  function rateOf(cur){
+    if(!cur || cur === "EUR") return 1;
+    if(cur === "USD") return S.rates && S.rates.USD ? S.rates.USD : S.fx;
+    return (S.rates && S.rates[cur]) || null;
+  }
 
   var positions = [], S = clone(DEFAULTS), updatedAt = 0;
   var selected = null, editingId = null, apiKey = "";
@@ -708,6 +735,24 @@
     /* bascule unique vers le dollar pour un portefeuille enregistré avant ce changement ;
        un choix manuel ultérieur reste respecté */
     if(!S.usdDefault){ S.currency = "USD"; S.usdDefault = true; needSave = true; }
+
+    /* Corriger les lignes enregistrées avant que la devise de cotation soit
+       déduite du symbole : leur prix Finnhub avait été rangé en euros sans
+       conversion, donc majoré du taux de change. */
+    if(!S.curFixed){
+      positions.forEach(function(q){
+        if(q.cls !== "equity" && q.cls !== "etf") return;
+        if(!q.sym) return;
+        var real = curFromSymbol(q.sym);
+        if(!real || real === q.cur) return;
+        if(q.priceSrc === "Finnhub" && q.cur === "EUR"){
+          var k = rateOf(real);
+          if(k && k > 0) q.price = q.price/k;
+        }
+        q.cur = real;
+      });
+      S.curFixed = true; needSave = true;
+    }
     if(!positions.length) positions = DEMO.map(seed);
   }
 
@@ -1582,8 +1627,11 @@
       F.name.value = c.name;
       acLastName = c.name;
     }
-    if(c.cls === "crypto"){ F.cg.value = c.quote || ""; F.sym.value = ""; }
-    else if(c.cls === "equity" || c.cls === "etf"){ F.sym.value = c.quote || c.ticker; F.cg.value = ""; }
+    if(c.cls === "crypto"){ F.cg.value = c.quote || ""; F.sym.value = ""; F.cur.value = "EUR"; }
+    else if(c.cls === "equity" || c.cls === "etf"){
+      F.sym.value = c.quote || c.ticker; F.cg.value = "";
+      F.cur.value = curFromSymbol(F.sym.value) || "USD";
+    }
     syncCashFields();
     acClose();
     autoPrice();
@@ -1698,12 +1746,9 @@
           "&token=" + encodeURIComponent(apiKey))
         .then(function(r){
           if(!r || !isFinite(r.c) || r.c === 0) return null;
-          var v = r.c;
-          if(d.cur === "USD"){
-            if(!S.fx) return null;
-            v = v/S.fx;                       /* cotation en dollars ramenée en euros */
-          }
-          return {price:v, src:"Finnhub"};
+          var k = rateOf(d.cur);
+          if(!k) throw new Error("devise de cotation " + (d.cur || "inconnue") + " sans taux");
+          return {price:r.c/k, src:"Finnhub"};   /* ramené en euros, référence interne */
         });
     }
     return Promise.resolve(null);
@@ -1864,6 +1909,10 @@
     var before = F.cg.value + "|" + F.sym.value;
     if(F.cls.value === "crypto" && !F.cg.value && CG[t]) F.cg.value = CG[t];
     if((F.cls.value === "equity" || F.cls.value === "etf") && !F.sym.value && t) F.sym.value = t;
+    if((F.cls.value === "equity" || F.cls.value === "etf") && F.sym.value){
+      var guess = curFromSymbol(F.sym.value);
+      if(guess) F.cur.value = guess;
+    }
     if(F.cg.value + "|" + F.sym.value !== before) autoPrice();
   });
 
@@ -2232,20 +2281,24 @@
 
     /* le taux sert à l'affichage en dollars comme à la conversion des cotations en USD ;
        repli sur le prix d'un stablecoin coté dans les deux devises si le convertisseur tombe */
-    function setFx(r, src){
+    function setFx(r, src, table){
       if(!isFinite(r) || r <= 0) throw new Error("taux absent");
       S.fx = r; S.fxSrc = src; S.fxAt = Date.now(); fxOk = true;
+      if(table) S.rates = table;
       applyCurrency();
       return r;
     }
-    var fxP = get("https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD")
-      .then(function(d){ return setFx(d && d.rates && d.rates.USD, "Frankfurter"); })
+    var fxP = get("https://api.frankfurter.dev/v1/latest?base=EUR&symbols=USD,CHF,CAD,JPY")
+      .then(function(d){
+        var t = d && d.rates;
+        return setFx(t && t.USD, "Frankfurter", t);
+      })
       .catch(function(e){
         if(isBlocked(e)) blocked = true;
         return get("https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=eur,usd")
           .then(function(d){
             var t = d && d.tether;
-            return setFx(t && t.usd/t.eur, "CoinGecko");
+            return setFx(t && t.usd/t.eur, "CoinGecko", null);
           })
           .catch(function(e2){
             if(isBlocked(e2)) blocked = true;
@@ -2289,13 +2342,14 @@
                 encodeURIComponent(p.sym) + "&token=" + encodeURIComponent(apiKey))
               .then(function(d){
                 if(!d || !isFinite(d.c) || d.c === 0) return;
-                var v = d.c;
-                if(p.cur === "USD"){
-                  var usdPerEur = fx || S.fx;
-                  if(!usdPerEur) return;
-                  v = v/usdPerEur;              /* cotation en dollars ramenée en euros */
+                var k = rateOf(p.cur);
+                if(!k){
+                  notes.push(p.ticker + " : devise de cotation " +
+                    (p.cur || "non renseignée") + ", taux indisponible.");
+                  return;
                 }
-                p.price = v; p.priceSrc = "Finnhub"; p.priceAt = Date.now(); n++;
+                p.price = d.c/k;               /* ramené en euros, référence interne */
+                p.priceSrc = "Finnhub"; p.priceAt = Date.now(); n++;
               })
               .catch(function(e){
                 if(isBlocked(e)) blocked = true;
