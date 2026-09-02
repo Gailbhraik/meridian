@@ -1431,6 +1431,8 @@
     ["CAT","Caterpillar","equity","CAT"], ["GE","GE Aerospace","equity","GE"],
     ["T","AT&T","equity","T"], ["VZ","Verizon","equity","VZ"],
 
+    ["SKHY","SK hynix (ADR)","equity","SKHY"], ["TSM","Taiwan Semiconductor (ADR)","equity","TSM"],
+    ["SONY","Sony Group (ADR)","equity","SONY"], ["BABA","Alibaba (ADR)","equity","BABA"],
     ["ASML","ASML Holding","equity","ASML.AS"], ["SAP","SAP","equity","SAP"],
     ["MC","LVMH","equity","MC.PA"], ["OR","L'Oréal","equity","OR.PA"],
     ["SAN","Sanofi","equity","SAN.PA"], ["AIR","Airbus","equity","AIR.PA"],
@@ -1458,7 +1460,7 @@
                  name:document.getElementById("acWrapName")};
   var acItems = [], acIndex = -1, acTimer = null, acSeq = 0, acLastName = "";
   /* le champ qui pilote la liste : ticker ou nom, la même liste se déplace sous lui */
-  var acFieldKey = "ticker";
+  var acFieldKey = "ticker", acProblem = "";
   function acInput(){ return acFieldKey === "name" ? F.name : F.ticker; }
 
   function acNorm(s){
@@ -1482,7 +1484,9 @@
 
   function acSort(list, q){
     return list.map(function(c, i){ return {c:c, i:i, s:acScore(c, q)}; })
-      .filter(function(o){ return o.s < 9; })
+      /* un résultat rapporté par une source en ligne est pertinent par construction,
+         même quand la requête est un ISIN qui n'apparaît ni dans le ticker ni dans le nom */
+      .filter(function(o){ return o.s < 9 || o.c.src !== "catalogue" || o.c.viaRemote; })
       .sort(function(a, b){
         if(a.s !== b.s) return a.s - b.s;
         var ra = a.c.src === "catalogue" ? -1 : (a.c.rank == null ? 9999 : a.c.rank);
@@ -1501,11 +1505,20 @@
   function acKey(c){ return c.cls + "|" + acNorm(c.ticker) + "|" + acNorm(c.quote); }
 
   function acMerge(base, extra){
-    var seen = {}, out = [];
-    base.concat(extra).forEach(function(c){
+    var idx = {}, out = [];
+    base.forEach(function(c){
       var k = acKey(c);
-      if(seen[k]) return;
-      seen[k] = 1; out.push(c);
+      if(idx[k]) return;
+      /* copie : le drapeau posé ci-dessous ne doit pas survivre à la recherche */
+      idx[k] = {ticker:c.ticker, name:c.name, cls:c.cls, quote:c.quote, src:c.src, rank:c.rank};
+      out.push(idx[k]);
+    });
+    extra.forEach(function(c){
+      var k = acKey(c);
+      /* déjà au catalogue : la source en ligne le confirme, ce qui suffit à le garder
+         même si la requête est un ISIN absent du ticker comme du nom */
+      if(idx[k]){ idx[k].viaRemote = true; return; }
+      idx[k] = c; out.push(c);
     });
     return out;
   }
@@ -1578,9 +1591,12 @@
     acList.innerHTML = "";
     var li = document.createElement("li");
     li.className = "ac-empty";
-    li.textContent = apiKey
-      ? "Aucune correspondance. Tapez le ticker exact de l'actif, puis renseignez son symbole dans « Cotation en direct »."
-      : "Aucune correspondance dans le catalogue. Ajoutez une clé Finnhub dans Réglages pour chercher toutes les actions et ETF, ou tapez le ticker exact.";
+    li.textContent = acProblem
+      ? "Aucune correspondance, et la recherche en ligne n'a pas abouti (" + acProblem +
+        "). Vous pouvez saisir le ticker exact et son symbole dans « Cotation en direct »."
+      : (apiKey
+        ? "Aucune correspondance. Tapez le ticker exact, ou son ISIN, puis vérifiez le symbole dans « Cotation en direct »."
+        : "Aucune correspondance dans le catalogue. Ajoutez une clé Finnhub dans Réglages pour chercher toutes les actions et ETF, ou tapez le ticker exact.");
     acList.appendChild(li);
     acFoot.textContent = note;
     if(acBox.parentNode !== acWraps[acFieldKey]) acWraps[acFieldKey].appendChild(acBox);
@@ -1642,7 +1658,11 @@
      est enregistrée. Sans réseau, seul le catalogue local répond. */
   function acRemote(q, seq){
     if(q.length < 2) return;                 /* une seule lettre : le catalogue suffit */
-    var jobs = [], found = [], sources = [];
+    var jobs = [], found = [], sources = [], problems = [];
+
+    function why(e){
+      return isBlocked(e) ? "réseau bloqué" : (e && e.message) || "erreur";
+    }
 
     jobs.push(
       get("https://api.coingecko.com/api/v3/search?query=" + encodeURIComponent(q))
@@ -1655,7 +1675,7 @@
           });
           if(coins.length) sources.push("CoinGecko");
         })
-        .catch(function(){})
+        .catch(function(e){ problems.push("CoinGecko : " + why(e)); })
     );
 
     if(apiKey){
@@ -1674,16 +1694,19 @@
             });
             if(res.length) sources.push("Finnhub");
           })
-          .catch(function(){})
+          .catch(function(e){ problems.push("Finnhub : " + why(e)); })
       );
+    } else {
+      problems.push("actions et ETF non cherchés, clé Finnhub absente");
     }
 
     Promise.all(jobs).then(function(){
       if(seq !== acSeq) return;                 /* une frappe plus récente a pris la main */
       var merged = acSort(acMerge(CATALOG, found), acNorm(q));
+      acProblem = problems.length ? problems.join(" · ") : "";
       acRender(merged, sources.length
-        ? "Catalogue + " + sources.join(" + ")
-        : "Catalogue local — recherche en ligne indisponible");
+        ? "Catalogue + " + sources.join(" + ") + (problems.length ? " — " + acProblem : "")
+        : "Catalogue local — " + (acProblem || "recherche en ligne indisponible"));
     });
   }
 
@@ -1695,7 +1718,7 @@
       if(acTimer) clearTimeout(acTimer);
       acSeq++;
       if(!q){ acClose(); return; }
-      acIndex = -1;
+      acIndex = -1; acProblem = "";
       acRender(acLocal(q), "Catalogue local");
       var seq = acSeq;
       acTimer = setTimeout(function(){ acRemote(q, seq); }, 280);
