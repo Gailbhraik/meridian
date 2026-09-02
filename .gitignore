@@ -9,3 +9,6 @@ twitch-adblock/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Exports du portefeuille : ils contiennent vos positions réelles
+meridian-*.json
